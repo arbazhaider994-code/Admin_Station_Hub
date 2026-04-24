@@ -1,0 +1,713 @@
+import Head from "next/head";
+import React, { useState, useEffect } from "react";
+import styles from "@/styles/Admin.module.css";
+import dashboardStyles from "@/styles/Dashboard.module.css";
+import { auth, db } from "@/lib/firebase";
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
+
+export default function Home() {
+  // State to track if the admin is logged in
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [activeTab, setActiveTab] = useState("overview");
+  const [services, setServices] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+
+  // Stations state
+  const [stations, setStations] = useState([]);
+  const [showAddStation, setShowAddStation] = useState(false);
+  const [newStation, setNewStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+  const [editingStationId, setEditingStationId] = useState(null);
+  const [editStation, setEditStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+  const [showServiceFormFor, setShowServiceFormFor] = useState(null);
+  const [newQuickService, setNewQuickService] = useState({ name: '', price: '', category: 'General' });
+  const [successMessage, setSuccessMessage] = useState("");
+
+  // State for login form data
+  const [formData, setFormData] = useState({ email: '', password: '' });
+
+  // ... (auth and sync logic) ...
+
+
+  // Check authentication status on load
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsLoggedIn(true);
+      } else {
+        setIsLoggedIn(false);
+      }
+      setIsCheckingAuth(false);
+    });
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showUserDropdown) return;
+    const closeDropdown = () => setShowUserDropdown(false);
+    window.addEventListener('click', closeDropdown);
+    return () => window.removeEventListener('click', closeDropdown);
+  }, [showUserDropdown]);
+
+  // Fetch real-time data from Firestore when logged in
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    // Listen to Services
+    const qServices = query(collection(db, "services"));
+    const unsubServices = onSnapshot(qServices, (snapshot) => {
+      const servicesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      console.log(`Fetched ${servicesData.length} services`);
+      setServices(servicesData);
+    }, (error) => {
+      console.error("Firestore Services Error:", error);
+      if (error.code === 'permission-denied') {
+        alert("Permission denied reading Services. Check your Firestore Security Rules.");
+      }
+    });
+
+    // Listen to Bookings
+    const qBookings = query(collection(db, "bookings"), orderBy("dateTime", "desc"));
+    const unsubBookings = onSnapshot(qBookings, (snapshot) => {
+      const bookingsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      console.log(`Fetched ${bookingsData.length} bookings`);
+      setBookings(bookingsData);
+    }, (error) => {
+      console.error("Firestore Bookings Error:", error);
+    });
+
+    // Listen to Stations
+    const qStations = query(collection(db, "stations"));
+    const unsubStations = onSnapshot(qStations, (snapshot) => {
+      const stationsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      console.log(`Fetched ${stationsData.length} stations`);
+      setStations(stationsData);
+    }, (error) => {
+      console.error("Firestore Stations Error:", error);
+      if (error.code === 'permission-denied') {
+        alert("Permission denied reading Stations. Check your Firestore Security Rules.");
+      }
+    });
+
+    return () => {
+      unsubServices();
+      unsubBookings();
+      unsubStations();
+    };
+  }, [isLoggedIn]);
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setErrorMsg("");
+
+    try {
+      await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      // setIsLoggedIn(true) is handled by onAuthStateChanged
+    }
+    catch (error) {
+      console.log(error.code);
+
+      if (error.code === "auth/user-not-found") {
+        setErrorMsg("Email is incorrect");
+      }
+      else if (error.code === "auth/wrong-password") {
+        setErrorMsg("Password is incorrect");
+      }
+      else if (error.code === "auth/invalid-credential") {
+        setErrorMsg("Email or password is incorrect");
+      }
+      else {
+        setErrorMsg("Login failed");
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      // setIsLoggedIn(false) is handled by onAuthStateChanged
+      setFormData({ email: '', password: '' });
+    } catch (error) {
+      console.error("Logout Error:", error);
+    }
+  };
+
+
+
+  // --- Station Handlers ---
+  const handleAddStation = async (e) => {
+    e.preventDefault();
+    
+    // OPTIMISTIC HIDE: Close form instantly
+    setShowAddStation(false); 
+    setEditingStationId(null);
+    
+    const stationToAdd = { ...newStation, createdAt: serverTimestamp() };
+    
+    try {
+      await addDoc(collection(db, "stations"), stationToAdd);
+      setNewStation({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+      setSuccessMessage("Station registered successfully!");
+      setTimeout(() => setSuccessMessage(""), 3000);
+    } catch (error) {
+      console.error("Error adding station:", error);
+      setShowAddStation(true); // Re-open on failure
+      alert("Failed to save station: " + error.message);
+    }
+  };
+
+  const handleAddServiceToStation = async (e, stationId, stationName) => {
+    e.preventDefault();
+    const price = parseFloat(String(newQuickService.price).replace(/[^0-9.]/g, ''));
+    
+    if (!newQuickService.name || isNaN(price)) {
+      alert("Please enter a valid service name and numeric price.");
+      return;
+    }
+
+    // OPTIMISTIC HIDE & RESET: Clear fields and close form instantly
+    setShowServiceFormFor(null);
+    setNewQuickService({ name: '', price: '', category: 'General' });
+
+    try {
+      await addDoc(collection(db, "services"), {
+        name: newQuickService.name.trim(),
+        price: price,
+        category: newQuickService.category || 'General',
+        status: 'Active',
+        stationId: stationId,
+        stationName: stationName,
+        createdAt: serverTimestamp()
+      });
+      
+      setSuccessMessage(`Service added to ${stationName}`);
+      setTimeout(() => setSuccessMessage(""), 3000);
+    } catch (error) {
+      console.error("Error adding service:", error);
+      // Re-open on failure and restore data (optional, but here we just alert)
+      setShowServiceFormFor(stationId); 
+      alert("Failed to add service: " + error.message);
+    }
+  };
+
+  const handleStartEditStation = (station) => {
+    setEditingStationId(station.id);
+    setEditStation({
+      name: station.name || '',
+      address: station.address || '',
+      city: station.city || '',
+      phone: station.phone || '',
+      email: station.email || '',
+      status: station.status || 'Active'
+    });
+    setShowAddStation(false);
+  };
+
+  const handleSaveEditStation = async (e) => {
+    e.preventDefault();
+    const stationId = editingStationId;
+    try {
+      await updateDoc(doc(db, "stations", stationId), editStation);
+      setEditingStationId(null);
+      alert("Station updated successfully!");
+    } catch (error) {
+      console.error("Error updating station:", error);
+      alert("Update failed: " + error.message);
+    }
+  };
+
+  const handleDeleteStation = async (stationId) => {
+    if (!window.confirm("Are you sure? This will also remove all services linked to this station.")) return;
+    try {
+      // Delete station
+      await deleteDoc(doc(db, "stations", stationId));
+
+      // Delete linked services
+      const linkedServices = services.filter(s => s.stationId === stationId);
+      for (const s of linkedServices) {
+        await deleteDoc(doc(db, "services", s.id));
+      }
+    } catch (error) {
+      console.error("Error deleting station:", error);
+    }
+  };
+
+  // Prevent flash of login screen while checking auth
+  if (isCheckingAuth) return null;
+
+  // If the admin is logged in, show the Dashboard
+  if (isLoggedIn) {
+    return (
+      <>
+        <Head>
+          <title>StationHub | Admin Dashboard</title>
+          <meta name="description" content="Manage your station hub" />
+        </Head>
+        <main className={dashboardStyles.dashboardLayout}>
+          {/* Sidebar */}
+          <aside className={dashboardStyles.sidebar}>
+            <div className={dashboardStyles.sidebarLogo}>
+              <div className={dashboardStyles.logoIcon}>S</div>
+              <span className={dashboardStyles.logoText}>StationHub</span>
+            </div>
+
+            <nav className={dashboardStyles.sidebarNav}>
+              <button
+                className={`${dashboardStyles.sidebarTab} ${activeTab === 'overview' ? dashboardStyles.activeSidebarTab : ''}`}
+                onClick={() => setActiveTab('overview')}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                Overview
+              </button>
+              <button
+                className={`${dashboardStyles.sidebarTab} ${activeTab === 'stations' ? dashboardStyles.activeSidebarTab : ''}`}
+                onClick={() => setActiveTab('stations')}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                Stations
+              </button>
+              <button
+                className={`${dashboardStyles.sidebarTab} ${activeTab === 'bookings' ? dashboardStyles.activeSidebarTab : ''}`}
+                onClick={() => setActiveTab('bookings')}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                Bookings
+              </button>
+            </nav>
+
+            <div className={dashboardStyles.sidebarFooter}>
+              <div style={{ padding: '0 12px', fontSize: '11px', color: '#9CA3AF', fontWeight: '600', textTransform: 'uppercase' }}>Version 1.0.0</div>
+            </div>
+          </aside>
+
+          {/* Main Content Area */}
+          <div className={dashboardStyles.mainContent}>
+            <header className={dashboardStyles.contentHeader}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <h1 className={dashboardStyles.contentTitle}>
+                  {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+                </h1>
+                {successMessage && (
+                  <div style={{ 
+                    backgroundColor: '#D1FAE5', 
+                    color: '#065F46', 
+                    padding: '6px 16px', 
+                    borderRadius: '20px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    border: '1px solid #10B981',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                    animation: 'fadeIn 0.3s ease-out'
+                  }}>
+                    <span style={{ marginRight: '6px' }}>✓</span> {successMessage}
+                  </div>
+                )}
+              </div>
+
+              <div className={dashboardStyles.userMenu}>
+                <div
+                  className={dashboardStyles.avatar}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowUserDropdown(!showUserDropdown);
+                  }}
+                >
+                  {auth.currentUser?.email?.charAt(0).toUpperCase() || 'A'}
+                </div>
+
+                {showUserDropdown && (
+                  <div className={dashboardStyles.dropdown}>
+                    <div className={dashboardStyles.dropdownInfo}>
+                      <span className={dashboardStyles.dropdownEmail} title={auth.currentUser?.email}>
+                        {auth.currentUser?.email || 'admin@stationhub.com'}
+                      </span>
+                    </div>
+                    <button onClick={handleLogout} className={dashboardStyles.dropdownItem}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                      Logout Account
+                    </button>
+                  </div>
+                )}
+              </div>
+            </header>
+
+            <div className={dashboardStyles.dashboardContainer}>
+
+              {activeTab === 'overview' && (
+                <>
+                  <div className={dashboardStyles.statsGrid}>
+                    <div className={dashboardStyles.statCard}>
+                      <h3 className={dashboardStyles.statTitle}>Registered Stations</h3>
+                      <p className={dashboardStyles.statValue}>{stations.length}</p>
+                    </div>
+                    <div className={dashboardStyles.statCard}>
+                      <h3 className={dashboardStyles.statTitle}>Total Services</h3>
+                      <p className={dashboardStyles.statValue}>{services.length}</p>
+                    </div>
+                    <div className={dashboardStyles.statCard}>
+                      <h3 className={dashboardStyles.statTitle}>Total Bookings</h3>
+                      <p className={dashboardStyles.statValue}>{bookings.length}</p>
+                    </div>
+                  </div>
+
+                  <div className={dashboardStyles.tableContainer} style={{ marginTop: '32px' }}>
+                    <h3 className={dashboardStyles.addFormTitle}>Stations & Services Summary</h3>
+                    <table className={dashboardStyles.table}>
+                      <thead>
+                        <tr>
+                          <th>Station Name</th>
+                          <th>Provided Services</th>
+                          <th>Location</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stations.map(station => {
+                          const serviceCount = services.filter(s => s.stationId === station.id).length;
+                          return (
+                            <tr key={station.id}>
+                              <td><strong>{station.name}</strong></td>
+                              <td>{serviceCount} {serviceCount === 1 ? 'Service' : 'Services'}</td>
+                              <td>{station.city}</td>
+                              <td>
+                                <span className={`${dashboardStyles.statusBadge} ${station.status === 'Active' ? dashboardStyles.statusActive : dashboardStyles.statusPending}`}>
+                                  {station.status}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {stations.length === 0 && (
+                          <tr>
+                            <td colSpan="4" style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>No stations registered yet.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'stations' && (
+                <div>
+                  {/* Register Station Button */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+                    <button
+                      className={dashboardStyles.addButton}
+                      onClick={() => {
+                        setShowAddStation(!showAddStation);
+                        setNewStation({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+                        setEditingStationId(null);
+                      }}
+                    >
+                      {showAddStation ? '✕ Cancel' : '+ Register Station'}
+                    </button>
+                  </div>
+
+                  {/* Register Station Form */}
+                  {showAddStation && (
+                    <form onSubmit={handleAddStation} className={dashboardStyles.addForm}>
+                      <h3 className={dashboardStyles.addFormTitle}>Register New Station</h3>
+                      <div className={dashboardStyles.addFormGrid}>
+                        <div className={dashboardStyles.addFormGroup}>
+                          <label className={dashboardStyles.addFormLabel}>Station Name *</label>
+                          <input type="text" className={dashboardStyles.addFormInput} placeholder="e.g. Riverside Detailing" value={newStation.name} onChange={(e) => setNewStation({ ...newStation, name: e.target.value })} required />
+                        </div>
+                        <div className={dashboardStyles.addFormGroup}>
+                          <label className={dashboardStyles.addFormLabel}>City *</label>
+                          <input type="text" className={dashboardStyles.addFormInput} placeholder="e.g. New York" value={newStation.city} onChange={(e) => setNewStation({ ...newStation, city: e.target.value })} required />
+                        </div>
+                        <div className={dashboardStyles.addFormGroup}>
+                          <label className={dashboardStyles.addFormLabel}>Phone *</label>
+                          <input type="tel" className={dashboardStyles.addFormInput} placeholder="e.g. +1 234 567 8900" value={newStation.phone} onChange={(e) => setNewStation({ ...newStation, phone: e.target.value })} required />
+                        </div>
+                        <div className={dashboardStyles.addFormGroup}>
+                          <label className={dashboardStyles.addFormLabel}>Email</label>
+                          <input type="email" className={dashboardStyles.addFormInput} placeholder="e.g. station@example.com" value={newStation.email} onChange={(e) => setNewStation({ ...newStation, email: e.target.value })} />
+                        </div>
+                        <div className={dashboardStyles.addFormGroup}>
+                          <label className={dashboardStyles.addFormLabel}>Status</label>
+                          <select className={dashboardStyles.addFormInput} value={newStation.status} onChange={(e) => setNewStation({ ...newStation, status: e.target.value })}>
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                          </select>
+                        </div>
+                        <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                          <label className={dashboardStyles.addFormLabel}>Full Address *</label>
+                          <input type="text" className={dashboardStyles.addFormInput} placeholder="e.g. 123 Main St, Brooklyn" value={newStation.address} onChange={(e) => setNewStation({ ...newStation, address: e.target.value })} required />
+                        </div>
+                      </div>
+
+                      <button type="submit" className={dashboardStyles.addButton} style={{ marginTop: '24px' }}>Register Station</button>
+                    </form>
+                  )}
+
+                  {/* Stations Table */}
+                  <div className={dashboardStyles.tableContainer}>
+                    <table className={dashboardStyles.table}>
+                      <thead>
+                        <tr>
+                          <th>Station Name</th>
+                          <th>City</th>
+                          <th>Address</th>
+                          <th>Phone</th>
+                          <th>Email</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stations.length > 0 ? stations.map((station) => (
+                          <React.Fragment key={station.id}>
+                            {editingStationId === station.id ? (
+                              <tr>
+                                <td colSpan="7">
+                                  <form onSubmit={handleSaveEditStation} className={dashboardStyles.addForm} style={{ margin: 0 }}>
+                                    <h3 className={dashboardStyles.addFormTitle}>Edit Station</h3>
+                                    <div className={dashboardStyles.addFormGrid}>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Station Name *</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={editStation.name} onChange={(e) => setEditStation({ ...editStation, name: e.target.value })} required />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>City *</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={editStation.city} onChange={(e) => setEditStation({ ...editStation, city: e.target.value })} required />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Phone *</label>
+                                        <input type="tel" className={dashboardStyles.addFormInput} value={editStation.phone} onChange={(e) => setEditStation({ ...editStation, phone: e.target.value })} required />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Email</label>
+                                        <input type="email" className={dashboardStyles.addFormInput} value={editStation.email} onChange={(e) => setEditStation({ ...editStation, email: e.target.value })} />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Status</label>
+                                        <select className={dashboardStyles.addFormInput} value={editStation.status} onChange={(e) => setEditStation({ ...editStation, status: e.target.value })}>
+                                          <option value="Active">Active</option>
+                                          <option value="Inactive">Inactive</option>
+                                        </select>
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                                        <label className={dashboardStyles.addFormLabel}>Full Address *</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={editStation.address} onChange={(e) => setEditStation({ ...editStation, address: e.target.value })} required />
+                                      </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                                      <button type="submit" className={dashboardStyles.addButton}>Save Changes</button>
+                                      <button type="button" className={dashboardStyles.cancelButton} onClick={() => setEditingStationId(null)}>Cancel</button>
+                                    </div>
+                                  </form>
+                                </td>
+                              </tr>
+                            ) : (
+                              <tr>
+                                <td>
+                                  <strong>{station.name || 'N/A'}</strong>
+                                  <ul className={dashboardStyles.nestedServiceList}>
+                                    {services.filter(s => s.stationId === station.id).map(s => (
+                                      <li key={s.id} className={dashboardStyles.nestedServiceTag}>
+                                        {s.name} - ${s.price}
+                                      </li>
+                                    ))}
+                                    {services.filter(s => s.stationId === station.id).length === 0 && (
+                                      <li style={{ fontSize: '10px', color: '#9CA3AF' }}>No services linked</li>
+                                    )}
+                                  </ul>
+                                </td>
+                                <td>{station.city || 'N/A'}</td>
+                                <td>{station.address || 'N/A'}</td>
+                                <td>{station.phone || 'N/A'}</td>
+                                <td>{station.email || 'N/A'}</td>
+                                <td>
+                                  <span className={`${dashboardStyles.statusBadge} ${station.status === 'Active' ? dashboardStyles.statusActive : dashboardStyles.statusPending}`}>
+                                    {station.status || 'Inactive'}
+                                  </span>
+                                </td>
+                                <td className={dashboardStyles.actionsCell}>
+                                  <button className={dashboardStyles.actionButton} onClick={() => handleStartEditStation(station)} title="Edit Station">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                  </button>
+                                  <button className={dashboardStyles.addButton} style={{ padding: '6px 14px', fontSize: '11px', backgroundColor: '#10B981' }} onClick={() => setShowServiceFormFor(station.id)}>+ Service</button>
+                                  <button className={dashboardStyles.deleteButton} onClick={() => handleDeleteStation(station.id)} title="Remove Station">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* Service Addition Row (Conditional) */}
+                            {showServiceFormFor === station.id && (
+                              <tr>
+                                <td colSpan="7" style={{ padding: '0' }}>
+                                  <div style={{
+                                    padding: '20px',
+                                    backgroundColor: '#F0FDFA',
+                                    border: '1px solid #10B981',
+                                    borderRadius: '0 0 8px 8px',
+                                    margin: '0 10px 10px 10px'
+                                  }}>
+                                    <h4 style={{ color: '#047857', marginBottom: '12px' }}>Add New Service to {station.name}</h4>
+                                    <form onSubmit={(e) => handleAddServiceToStation(e, station.id, station.name)} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '12px', alignItems: 'flex-end' }}>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Service Name</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={newQuickService.name} onChange={(e) => setNewQuickService({ ...newQuickService, name: e.target.value })} required />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Price ($)</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={newQuickService.price} onChange={(e) => setNewQuickService({ ...newQuickService, price: e.target.value })} required />
+                                      </div>
+                                      <div className={dashboardStyles.addFormGroup}>
+                                        <label className={dashboardStyles.addFormLabel}>Category</label>
+                                        <input type="text" className={dashboardStyles.addFormInput} value={newQuickService.category} onChange={(e) => setNewQuickService({ ...newQuickService, category: e.target.value })} />
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button type="submit" className={dashboardStyles.addButton} style={{ padding: '10px 20px' }}>Save Service</button>
+                                        <button type="button" className={dashboardStyles.deleteButton} style={{ padding: '10px 12px' }} onClick={() => setShowServiceFormFor(null)}>✕</button>
+                                      </div>
+                                    </form>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        )) : (
+                          <tr>
+                            <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>No stations registered yet. Click &ldquo;+ Register Station&rdquo; to get started.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+
+
+              {activeTab === 'bookings' && (
+                <div className={dashboardStyles.tableContainer}>
+                  <table className={dashboardStyles.table}>
+                    <thead>
+                      <tr>
+                        <th>Service Center</th>
+                        <th>Service</th>
+                        <th>Vehicle</th>
+                        <th>Date & Time</th>
+                        <th>Payment</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bookings.length > 0 ? bookings.map((booking) => (
+                        <tr key={booking.id}>
+                          <td>{booking.serviceCenter || 'N/A'}</td>
+                          <td>{booking.serviceName || 'N/A'}</td>
+                          <td>{booking.vehicle || 'N/A'}</td>
+                          <td>{booking.dateTime || 'N/A'}</td>
+                          <td>${booking.payment || '0.00'}</td>
+                          <td>
+                            <span className={`${dashboardStyles.statusBadge} ${booking.status === 'Up-Coming' || booking.status === 'Confirmed' ? dashboardStyles.statusActive : dashboardStyles.statusPending}`}>
+                              {booking.status || 'Pending'}
+                            </span>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan="6" style={{ textAlign: 'center', padding: '40px' }}>No bookings found in database.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  // If the admin is NOT logged in, show the Login component
+  return (
+    <>
+      <Head>
+        <title>Admin Portal Login</title>
+        <meta name="description" content="Secure Admin Login Portal" />
+      </Head>
+      <main className={styles.main}>
+        <div className={styles.container}>
+          <div className={styles.glassCard}>
+            <div className={styles.header}>
+              <h1 className={styles.title}>Admin Portal</h1>
+              <p className={styles.subtitle}>Sign in to access the admin dashboard</p>
+            </div>
+            <form onSubmit={handleLogin} className={styles.form}>
+              {errorMsg && (
+                <div className={styles.errorPopup}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                  {errorMsg}
+                </div>
+              )}
+              <div className={styles.inputGroup}>
+                <label htmlFor="email" className={styles.label}>Admin Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  className={styles.input}
+                  placeholder="admin@yourdomain.com"
+                  value={formData.email}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
+              <div className={styles.inputGroup}>
+                <label htmlFor="password" className={styles.label}>Password</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  className={styles.input}
+                  placeholder="••••••••"
+                  value={formData.password}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
+              <button type="submit" className={styles.submitButton}>
+                Sign In
+              </button>
+            </form>
+            <div className={styles.footer}>
+              <p>Authorized personnel only. Contact the system administrator for access.</p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </>
+  );
+}
