@@ -19,17 +19,22 @@ export default function Home() {
   // Stations state
   const [stations, setStations] = useState([]);
   const [showAddStation, setShowAddStation] = useState(false);
-  const [newStation, setNewStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+  const [newStation, setNewStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active', description: 'Write something about station' });
+  const [stationImages, setStationImages] = useState([]);
+  const [newImages, setNewImages] = useState([]);
+  const [existingImages, setExistingImages] = useState([]);
   const [editingStationId, setEditingStationId] = useState(null);
-  const [editStation, setEditStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+  const [editStation, setEditStation] = useState({ name: '', address: '', city: '', phone: '', email: '', status: 'Active', description: 'Write something about station' });
   const [showServiceFormFor, setShowServiceFormFor] = useState(null);
-  const [newQuickService, setNewQuickService] = useState({ name: '', price: '', category: 'General' });
+  const [newQuickService, setNewQuickService] = useState({ name: '', price: '', description: 'write something about this service' });
   const [successMessage, setSuccessMessage] = useState("");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [pendingServices, setPendingServices] = useState([]);
-  const [tempService, setTempService] = useState({ name: '', price: '', category: 'General' });
-
+  const [tempService, setTempService] = useState({ name: '', price: '', description: 'write something about this service' });
+  const removeExistingImage = (index) => {
+    setExistingImages((prev) => prev.filter((_, i) => i !== index));
+  };
   // State for login form data
   const [formData, setFormData] = useState({ email: '', password: '' });
 
@@ -155,8 +160,6 @@ export default function Home() {
     }
   };
 
-
-
   // --- Station Handlers ---
   const handleAddStation = async (e) => {
     e.preventDefault();
@@ -165,33 +168,86 @@ export default function Home() {
     setShowAddStation(false);
     setEditingStationId(null);
 
-    const stationToAdd = { ...newStation, createdAt: serverTimestamp() };
-
     try {
+      // 1. Upload images to Cloudinary
+      const uploadToCloudinary = async (files) => {
+        const uploads = Array.from(files).map(async (file) => {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("upload_preset", "station_upload");
+
+          const res = await fetch(
+            "https://api.cloudinary.com/v1_1/dmyl1ftar/image/upload",
+            {
+              method: "POST",
+              body: formData,
+            }
+          );
+
+          const data = await res.json();
+          console.log("Cloudinary response:", data);
+
+          if (!res.ok) {
+            throw new Error(data.error?.message || "Upload failed");
+          }
+          return data.secure_url;
+        });
+        return await Promise.all(uploads);
+      };
+
+      const imageUrls = await uploadToCloudinary(stationImages);
+
+      // 2. Save station in Firestore
+      const stationToAdd = {
+        name: newStation.name,
+        address: newStation.address,
+        city: newStation.city,
+        phone: newStation.phone,
+        email: newStation.email,
+        status: newStation.status,
+        description: newStation.description,
+        images: imageUrls?.filter(Boolean) || [],
+        createdAt: serverTimestamp(),
+      };
+
       const stationRef = await addDoc(collection(db, "stations"), stationToAdd);
 
-      // Save pending services if any
+      // 3. Save pending services
       if (pendingServices.length > 0) {
-        const servicesPromises = pendingServices.map(service =>
+        const servicesPromises = pendingServices.map((service) =>
           addDoc(collection(db, "services"), {
             ...service,
             stationId: stationRef.id,
             stationName: newStation.name,
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
           })
         );
         await Promise.all(servicesPromises);
       }
 
-      setNewStation({ name: '', address: '', city: '', phone: '', email: '', status: 'Active' });
+      // 4. Reset state
+      setNewStation({
+        name: "",
+        address: "",
+        city: "",
+        phone: "",
+        email: "",
+        status: "Active",
+      });
+
+      setStationImages([]); // IMPORTANT reset images
       setPendingServices([]);
+
       setSuccessMessage(`Station ${newStation.name} registered successfully!`);
       setTimeout(() => setSuccessMessage(""), 3000);
-      setActiveTab('stations'); // Move to list view
+
+      setActiveTab("stations");
     } catch (error) {
       console.error("Error adding station:", error);
+
       setShowAddStation(true); // Re-open on failure
       alert("Failed to save station: " + error.message);
+      console.log("Uploaded Image URLs:", imageUrls);
     }
   };
 
@@ -201,7 +257,7 @@ export default function Home() {
       return;
     }
     setPendingServices([...pendingServices, { ...tempService, price: parseFloat(tempService.price) }]);
-    setTempService({ name: '', price: '', category: 'General' });
+    setTempService({ name: '', price: '', description: 'write something about this service' });
   };
 
   const removePendingService = (index) => {
@@ -220,13 +276,13 @@ export default function Home() {
 
     // OPTIMISTIC HIDE & RESET: Clear fields and close form instantly
     setShowServiceFormFor(null);
-    setNewQuickService({ name: '', price: '', category: 'General' });
+    setNewQuickService({ name: '', price: '', description: 'write something about this service' });
 
     try {
       await addDoc(collection(db, "services"), {
         name: newQuickService.name.trim(),
         price: price,
-        category: newQuickService.category || 'General',
+        description: newQuickService.description || "write something about this service",
         status: 'Active',
         stationId: stationId,
         stationName: stationName,
@@ -251,20 +307,51 @@ export default function Home() {
       city: station.city || '',
       phone: station.phone || '',
       email: station.email || '',
-      status: station.status || 'Active'
+      status: station.status || 'Active',
+      description: station.description || 'Write something about station'
     });
     setShowAddStation(false);
+    setNewImages([]);
+    setExistingImages(station.images || []);
   };
 
   const handleSaveEditStation = async (e) => {
     e.preventDefault();
-    const stationId = editingStationId;
+
     try {
-      await updateDoc(doc(db, "stations", stationId), editStation);
+      // Upload new images
+      const uploadToCloudinary = async (files) => {
+        const uploads = files.map(async (file) => {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("upload_preset", "station_upload");
+
+          const res = await fetch("https://api.cloudinary.com/v1_1/dmyl1ftar/image/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+          return data.secure_url;
+        });
+
+        return Promise.all(uploads);
+      };
+
+      const uploadedImages = await uploadToCloudinary(newImages);
+
+      const finalImages = [...existingImages, ...uploadedImages];
+
+      await updateDoc(doc(db, "stations", editingStationId), {
+        ...editStation,
+        images: finalImages
+      });
+
       setEditingStationId(null);
       alert("Station updated successfully!");
+
     } catch (error) {
-      console.error("Error updating station:", error);
+      console.error(error);
       alert("Update failed: " + error.message);
     }
   };
@@ -520,6 +607,7 @@ export default function Home() {
                             <th>Contact</th>
                             <th>Status</th>
                             <th>Actions</th>
+                            <th>Description</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -539,6 +627,7 @@ export default function Home() {
                                           <label className={dashboardStyles.addFormLabel}>City *</label>
                                           <input type="text" className={dashboardStyles.addFormInput} value={editStation.city} onChange={(e) => setEditStation({ ...editStation, city: e.target.value })} required />
                                         </div>
+
                                         <div className={dashboardStyles.addFormGroup}>
                                           <label className={dashboardStyles.addFormLabel}>Phone *</label>
                                           <input type="tel" className={dashboardStyles.addFormInput} value={editStation.phone} onChange={(e) => setEditStation({ ...editStation, phone: e.target.value })} required />
@@ -558,8 +647,85 @@ export default function Home() {
                                           <label className={dashboardStyles.addFormLabel}>Full Address *</label>
                                           <input type="text" className={dashboardStyles.addFormInput} value={editStation.address} onChange={(e) => setEditStation({ ...editStation, address: e.target.value })} required />
                                         </div>
+                                        <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                                          <label className={dashboardStyles.addFormLabel}>Description *</label>
+                                          <textarea className={dashboardStyles.addFormInput} value={editStation.description} onChange={(e) => setEditStation({ ...editStation, description: e.target.value })} required></textarea>
+                                        </div>
+                                        {/* Existing Images */}
+                                        <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                                          <label className={dashboardStyles.addFormLabel}>Existing Images</label>
+                                        </div>
+                                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "10px" }}>
+                                          {existingImages.length > 0 ? (
+                                            existingImages.map((img, index) => (
+                                              <div key={index} style={{ position: "relative" }}>
+                                                <img
+                                                  src={img}
+                                                  alt="station"
+                                                  style={{
+                                                    width: "90px",
+                                                    height: "90px",
+                                                    objectFit: "cover",
+                                                    borderRadius: "8px",
+                                                    border: "1px solid #ddd"
+                                                  }}
+                                                />
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => removeExistingImage(index)}
+                                                  style={{
+                                                    position: "absolute",
+                                                    top: "-6px",
+                                                    right: "-6px",
+                                                    background: "red",
+                                                    color: "white",
+                                                    border: "none",
+                                                    borderRadius: "50%",
+                                                    width: "20px",
+                                                    height: "20px",
+                                                    cursor: "pointer"
+                                                  }}
+                                                >
+                                                  ✕
+                                                </button>
+                                              </div>
+                                            ))
+                                          ) : (
+                                            <p style={{ fontSize: "12px", color: "#9CA3AF" }}>No images available</p>
+                                          )}
+                                        </div>
                                       </div>
 
+                                      {/* Upload New Images */}
+                                      <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                                        <label className={dashboardStyles.addFormLabel}>Upload New Images</label>
+
+                                        <input
+                                          type="file"
+                                          multiple
+                                          accept="image/*"
+                                          className={dashboardStyles.addFormInput}
+                                          onChange={(e) => setNewImages(Array.from(e.target.files))}
+                                        />
+
+                                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "10px" }}>
+                                          {newImages.map((file, index) => (
+                                            <img
+                                              key={index}
+                                              src={URL.createObjectURL(file)}
+                                              alt="new"
+                                              style={{
+                                                width: "90px",
+                                                height: "90px",
+                                                objectFit: "cover",
+                                                borderRadius: "8px",
+                                                border: "1px solid #ddd"
+                                              }}
+                                            />
+                                          ))}
+                                        </div>
+                                      </div>
                                       <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                                         <button type="submit" className={dashboardStyles.addButton}>Save Changes</button>
                                         <button type="button" className={dashboardStyles.cancelButton} onClick={() => setEditingStationId(null)}>Cancel</button>
@@ -574,7 +740,7 @@ export default function Home() {
                                     <ul className={dashboardStyles.nestedServiceList}>
                                       {services.filter(s => s.stationId === station.id).map(s => (
                                         <li key={s.id} className={dashboardStyles.nestedServiceTag}>
-                                          {s.name} - ${s.price}
+                                          {s.name} - ${s.price} - {s.description}
                                         </li>
                                       ))}
                                       {services.filter(s => s.stationId === station.id).length === 0 && (
@@ -584,6 +750,7 @@ export default function Home() {
                                   </td>
                                   <td>{station.city || 'N/A'}</td>
                                   <td>{station.address || 'N/A'}</td>
+
                                   <td>
                                     <div style={{ fontSize: '13px', fontWeight: '500', color: '#111827' }}>{station.phone || 'N/A'}</div>
                                     <div style={{ fontSize: '12px', color: '#6B7280' }}>{station.email || 'N/A'}</div>
@@ -604,6 +771,10 @@ export default function Home() {
                                       </button>
                                     </div>
                                   </td>
+                                  <td>
+                                    {station.description || "N/A"}
+                                  </td>
+
                                 </tr>
                               )}
 
@@ -625,7 +796,7 @@ export default function Home() {
                 <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
                   <div className={dashboardStyles.addForm} style={{ padding: '40px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '32px', paddingBottom: '20px', borderBottom: '1px solid #F3F4F6' }}>
-                      <div style={{ width: '64px', height: '64px', background: 'rgba(249, 115, 22, 0.1)', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyCenter: 'center', color: '#F97316' }}>
+                      <div style={{ width: '64px', height: '64px', background: 'rgba(249, 115, 22, 0.1)', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#F97316' }}>
                         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto' }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
                       </div>
                       <div>
@@ -702,6 +873,28 @@ export default function Home() {
                             required
                           />
                         </div>
+                        <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1/ -1' }}>
+                          <label className={dashboardStyles.addFormLabel}>Station Description *</label>
+                          <textarea
+                            className={dashboardStyles.addFormInput}
+                            placeholder="Write something about station"
+                            value={newStation.description}
+                            onChange={(e) => setNewStation({ ...newStation, description: e.target.value })}
+                            required
+                            rows={4}
+                          />
+                        </div>
+                        <div className={dashboardStyles.addFormGroup} style={{ gridColumn: '1 / -1' }}>
+                          <label className={dashboardStyles.addFormLabel}>Station Images</label>
+
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(e) => setStationImages(Array.from(e.target.files))}
+                            className={dashboardStyles.addFormInput}
+                          />
+                        </div>
                       </div>
 
                       {/* Station Services Section */}
@@ -717,6 +910,10 @@ export default function Home() {
                           <div className={dashboardStyles.addFormGroup} style={{ flex: '1 1 100px' }}>
                             <label className={dashboardStyles.addFormLabel}>Price ($)</label>
                             <input type="number" className={dashboardStyles.addFormInput} placeholder="49.99" value={tempService.price} onChange={(e) => setTempService({ ...tempService, price: e.target.value })} />
+                          </div>
+                          <div className={dashboardStyles.addFormGroup}>
+                            <label className={dashboardStyles.addFormLabel}>Service Description</label>
+                            <input type="text" className={dashboardStyles.addFormInput} placeholder='write something about this service' value={tempService.description} onChange={(e) => setTempService({ ...tempService, description: e.target.value })} />
                           </div>
                           <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '2px' }}>
                             <button type="button" onClick={addPendingService} className={dashboardStyles.addButton} style={{ height: '42px', padding: '0 20px', width: '100%' }}>+ Add to List</button>

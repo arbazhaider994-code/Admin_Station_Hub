@@ -141,7 +141,8 @@
   flex: 1;
   padding: 32px 40px;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #F9FAFB;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
@@ -548,28 +549,28 @@
 /* All Stations Table specific widths */
 .mainTable th:nth-child(1),
 .mainTable td:nth-child(1) {
-  width: 22%;
+  width: 15%;
 }
 
 .mainTable th:nth-child(2),
 .mainTable td:nth-child(2) {
-  width: 12%;
+  width: 10%;
 }
 
 .mainTable th:nth-child(3),
 .mainTable td:nth-child(3) {
-  width: 20%;
+  width: 15%;
 }
 
 /* Reduced Address further */
 .mainTable th:nth-child(4),
 .mainTable td:nth-child(4) {
-  width: 21%;
+  width: 10%;
 }
 
 .mainTable th:nth-child(5),
 .mainTable td:nth-child(5) {
-  width: 10%;
+  width: 7%;
 }
 
 .mainTable th:nth-child(6),
@@ -579,6 +580,7 @@
   padding-left: 0;
   padding-right: 0;
 }
+
 
 /* Global Table cell alignment */
 .table td {
