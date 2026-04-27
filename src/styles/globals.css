@@ -1,10 +1,74 @@
-* {
-  margin: 0px;
-  padding: 0px;
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
 }
 
-*::-webkit-scrollbar {
-  display: none !important;
+/* Base Styles */
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Default Scroll Behavior for internal containers */
+[class*="tableWrapper"] {
+  overflow-x: auto;
+}
+
+[class*="scrollableContent"], [class*="tabScrollArea"] {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Only apply custom orange scrollbars and forced overflow on smaller screens/tablets */
+@media (max-width: 1024px) {
+  /* Custom Scrollbar Styles */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #E2E8F0;
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #FF4500;
+    border-radius: 10px;
+  }
+
+  /* Specific scrolling containers on mobile/tablet */
+  [class*="tableWrapper"] {
+    overflow-x: auto !important;
+    scrollbar-width: thin;
+    scrollbar-color: #FF4500 #E2E8F0;
+  }
+
+  /* Ensure vertical scroll areas work well on mobile */
+  [class*="scrollableContent"], [class*="tabScrollArea"] {
+    scrollbar-width: thin;
+    scrollbar-color: #FF4500 #E2E8F0;
+  }
+}
+
+/* Hide scrollbars on large screens if the user specifically requested it */
+@media (min-width: 1025px) {
+  /* This will hide the custom styling and use default browser behavior (usually hidden until scroll) */
+  ::-webkit-scrollbar {
+    width: 0px;
+    background: transparent; /* Optional: hides the scrollbar entirely on webkit */
+  }
+  
+  * {
+    scrollbar-width: none; /* Hides scrollbar on Firefox */
+  }
+  
+  /* Still allow scrolling, just hide the bar */
+  [class*="tableWrapper"], [class*="tabScrollArea"] {
+    -ms-overflow-style: none; /* IE and Edge */
+  }
 }
